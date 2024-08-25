@@ -1,3 +1,2 @@
 # NP-Trend
-***
-Analysis the trend of novelpia.
+Analysis the daily trend of Novelpia(https://novelpia.com/).
