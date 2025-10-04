@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useTransition } from 'react';
-import { Container, Table, Button, Spinner, OverlayTrigger, Tooltip as BootstrapTooltip, Row, Col, Card, ButtonGroup, Alert} from 'react-bootstrap';
-import { ArrowUp, ArrowDown, ArrowDownUp, InfoCircle } from 'react-bootstrap-icons';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Container, Table, Button, Spinner, OverlayTrigger, Tooltip as BootstrapTooltip, Row, Col, Card, ButtonGroup, Alert, Dropdown, Nav } from 'react-bootstrap';
+import { ArrowUp, ArrowDown, ArrowDownUp } from 'react-bootstrap-icons';
+import { useParams, useNavigate, NavLink } from 'react-router-dom';
 import { format, parseISO, isValid } from 'date-fns';
-import { getTagRankingsByDate, getAvailableDates } from '../services/api';
+import { getContestTagRankingsByDate, getContestAvailableDates } from '../services/api';
 import CalendarPicker from '../components/CalendarPicker';
 import TagSearchControl from '../components/TagSearchControl';
 import { ResponsiveContainer, ScatterChart, CartesianGrid, XAxis, YAxis, Tooltip as RechartsTooltip, Scatter, Cell } from 'recharts';
@@ -69,9 +69,7 @@ const CustomScatterShape = React.memo((props: any) => {
 
     return (
         <g className={className}>
-            {/* Invisible circle for larger hover area */}
             <circle cx={cx} cy={cy} r={12} fill="transparent" />
-            {/* Visible circle */}
             <circle cx={cx} cy={cy} r={6} fill={fill} stroke="rgba(255, 255, 255, 0.7)" strokeWidth={1} />
         </g>
     );
@@ -79,7 +77,7 @@ const CustomScatterShape = React.memo((props: any) => {
 
 
 // --- MAIN COMPONENT ---
-const TagRankingsPage = () => {
+const ContestTagRankingsPage = () => {
   const [tags, setTags] = useState<Tag[]>([]);
   const [date, setDate] = useState<Date | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,13 +85,13 @@ const TagRankingsPage = () => {
   const [availableDatesSet, setAvailableDatesSet] = useState<Set<string>>(new Set());
   const [sortConfig, setSortConfig] = useState<{ key: keyof Tag; direction: 'ascending' | 'descending' }>({ key: 'score_linear', direction: 'descending' });
   const [topN, setTopN] = useState<number>(20);  
-  const [searchTerm, setSearchTerm] = useState(''); // Debounced search term
+  const [searchTerm, setSearchTerm] = useState('');
   const activeTagRef = useRef<string | null>(null);
   const [mobileViewMode, setMobileViewMode] = useState<'card' | 'table'>('card');
   const [isPending, startTransition] = useTransition();
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
-  const { date: dateParam } = useParams();
+  const { year, date: dateParam } = useParams<{ year: string; date?: string }>();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -117,9 +115,7 @@ const TagRankingsPage = () => {
     event.currentTarget.classList.add('highlight-row');
     const safeSelector = CSS.escape(tag);
     const point = document.querySelector(`.scatter-point-${safeSelector}`);
-    if (point) {
-        point.classList.add('highlight');
-    }
+    if (point) point.classList.add('highlight');
 
     activeTagRef.current = tag;
   }, []);
@@ -149,59 +145,51 @@ const TagRankingsPage = () => {
   };
 
   const handleSearchChange = useCallback((term: string) => {
-    startTransition(() => {
-      setSearchTerm(term);
-    });
-  }, []); // startTransition is stable
+    startTransition(() => setSearchTerm(term));
+  }, []);
 
   const handleDateChange = (newDate: Date | null) => {
-    if (newDate && (!date || format(newDate, 'yyyy-MM-dd') !== format(date, 'yyyy-MM-dd'))) {
+    if (newDate && year && (!date || format(newDate, 'yyyy-MM-dd') !== format(date, 'yyyy-MM-dd'))) {
       setLoading(true);
-      navigate(`/tags/rankings/${format(newDate, 'yyyy-MM-dd')}`);
+      navigate(`/contests/${year}/tags/rankings/${format(newDate, 'yyyy-MM-dd')}`);
     }
   };
 
   useEffect(() => {
-    getAvailableDates().then(response => {
+    const yearNum = parseInt(year || '0', 10);
+    if (!yearNum) return;
+
+    getContestAvailableDates(yearNum).then(response => {
       const fetchedDates: string[] = response.data.available_dates || [];
       setAvailableDatesSet(new Set(fetchedDates));
       if (!dateParam && fetchedDates.length > 0) {
-        const latestDate = fetchedDates.sort().pop();
-        if (latestDate) navigate(`/tags/rankings/${latestDate}`, { replace: true });
+        const latestDate = fetchedDates[0]; // Already sorted descending
+        if (latestDate) navigate(`/contests/${year}/tags/rankings/${latestDate}`, { replace: true });
       }
     });
-  }, [dateParam, navigate]);
+  }, [year, dateParam, navigate]);
 
   useEffect(() => {
     if (dateParam && isValid(parseISO(dateParam))) {
       setDate(parseISO(dateParam));
     } else if (dateParam) {
-        navigate('/tags/rankings', {replace: true});
+        navigate(`/contests/${year}/tags/rankings`, {replace: true});
     }
-  }, [dateParam, navigate]);
+  }, [dateParam, navigate, year]);
 
   useEffect(() => {
-    if (!date) return;
+    const yearNum = parseInt(year || '0', 10);
+    if (!date || !yearNum) return;
+
     setLoading(true);
     setError(null);
-    getTagRankingsByDate(format(date, 'yyyy-MM-dd')).then(response => {
-      const data = response.data;
-      if (Array.isArray(data)) {
-        setTags(data);
-      } else {
-        setTags([]);
-        if (data && data.message) {
-          // 데이터가 없다는 메시지는 에러는 아니므로 콘솔에만 표시
-          console.log(data.message);
-        } else if (data && data.error) {
-          setError('태그 랭킹을 불러오는 데 실패했습니다.');
-        }
-      }
+    getContestTagRankingsByDate(yearNum, format(date, 'yyyy-MM-dd')).then(response => {
+      setTags(response.data || []);
     }).catch(_err => {
-      setError('Failed to fetch tag rankings.');
+      setError('태그 랭킹을 불러오는 데 실패했습니다.');
       setTags([]);
     }).finally(() => setLoading(false));
-  }, [date]);
+  }, [date, year]);
 
   const processedTags = useMemo(() => {
     let sortableItems = tags.map(tag => ({
@@ -216,11 +204,7 @@ const TagRankingsPage = () => {
         const bValue = b[sortConfig.key];
         if (aValue < bValue) return sortConfig.direction === 'ascending' ? -1 : 1;
         if (aValue > bValue) return sortConfig.direction === 'ascending' ? 1 : -1;
-        
-        // Secondary sort for stability. To ensure items with the same score have a consistent
-        // rank regardless of the sort direction (asc/desc), the tie-breaker sort
-        // must be in the opposite direction of the primary sort.
-        const tieBreaker = a.tag.localeCompare(b.tag); // A-Z
+        const tieBreaker = a.tag.localeCompare(b.tag);
         return sortConfig.direction === 'ascending' ? -tieBreaker : tieBreaker;
       });
     }
@@ -231,24 +215,15 @@ const TagRankingsPage = () => {
 
     if (searchTerm) {
       const lowercasedTerm = searchTerm.toLowerCase();
-      rankedItems = rankedItems.filter(item =>
-        item.tag.toLowerCase().includes(lowercasedTerm)
-      );
+      rankedItems = rankedItems.filter(item => item.tag.toLowerCase().includes(lowercasedTerm));
     }
 
     return rankedItems;
   }, [tags, sortConfig, searchTerm]);
 
   const chartData = useMemo(() => {
-    // 차트 데이터는 항상 '선형 점수'를 기준으로 생성합니다.
     const itemsWithAvgs = tags.map(tag => ({ ...tag, avg_linear: tag.count > 0 ? tag.score_linear / tag.count : 0 }));
-    const sortedForChart = [...itemsWithAvgs].sort((a, b) => {
-      const aValue = a.score_linear;
-      const bValue = b.score_linear;
-      if (aValue < bValue) return 1;
-      if (aValue > bValue) return -1;
-      return a.tag.localeCompare(b.tag);
-    });
+    const sortedForChart = [...itemsWithAvgs].sort((a, b) => b.score_linear - a.score_linear || a.tag.localeCompare(b.tag));
     const rankedForChart = sortedForChart.map((tag, index) => ({ ...tag, Rank: index + 1 }));
     return rankedForChart.slice(0, topN);
   }, [tags, topN]);
@@ -267,42 +242,58 @@ const TagRankingsPage = () => {
   };
 
   const topNOptions = [20, 50, 100];
-
   const xDomain = useMemo(() => getAxisDomain(chartData.map(d => d.count)), [chartData]);
   const yDomain = useMemo(() => getAxisDomain(chartData.map(d => d.avg_linear)), [chartData]);
+
+  const handleYearChange = (newYear: string | null) => {
+    if (newYear && newYear !== year) {
+      navigate(`/contests/${newYear}/tags/rankings`);
+    }
+  };
 
   return (
     <>
       <style>{`
-        .scatter-point > circle {
-            transition: r 0.15s ease-in-out, stroke-width 0.15s ease-in-out;
+        .scatter-point > circle { transition: r 0.15s ease-in-out, stroke-width 0.15s ease-in-out; }
+        .scatter-point.highlight > circle { r: 10px; stroke: black; stroke-width: 2.5px; }
+        tr.highlight-row { background-color: #e9ecef !important; }
+        .year-dropdown-menu {
+          min-width: auto;
         }
-        .scatter-point.highlight > circle {
-            r: 10px;
-            stroke: black;
-            stroke-width: 2.5px;
+        .year-dropdown-toggle {
+          padding: .2rem .4rem;
+          font-size: 0.9rem;
         }
-        tr.highlight-row {
-            background-color: #e9ecef !important;
+        @media (max-width: 767px) {
+          .year-dropdown-toggle {
+            padding: .1rem .3rem;
+            font-size: 0.8rem;
+          }
         }
       `}</style>
         <Container className="py-3 py-md-4 d-flex flex-column" style={{ height: isMobile ? 'calc(100dvh - 56px)' : 'auto' }}>
         <div className="d-flex align-items-center gap-2 mb-2">
-          <h1 className="h2 mb-0 fs-page-title">태그 랭킹</h1>
-          <OverlayTrigger
-            placement="bottom"
-            overlay={
-              <BootstrapTooltip id="ranking-description-tooltip">
-                소설 랭킹 데이터를 기반으로 태그별 점수를 계산합니다.
-              </BootstrapTooltip>
-            }
-          >
-            <span className="d-md-none" style={{ cursor: 'pointer' }}>
-              <InfoCircle />
-            </span>
-          </OverlayTrigger>
+          <h1 className="h2 mb-0 fs-page-title">우주최강 공모전</h1>
+          <Dropdown onSelect={handleYearChange}>
+            <Dropdown.Toggle variant="outline-secondary" id="dropdown-year-select" size="sm" className="year-dropdown-toggle">
+              {year}년
+            </Dropdown.Toggle>
+            <Dropdown.Menu className="year-dropdown-menu">
+              {['2025'].map(y => (
+                <Dropdown.Item key={y} eventKey={y} active={y === year}>{y}년</Dropdown.Item>
+              ))}
+            </Dropdown.Menu>
+          </Dropdown>
         </div>
-        <p className="text-muted mb-3 d-none d-md-block">소설 랭킹을 기반으로 태그별 점수를 계산하여 랭킹을 보여줍니다. 날짜를 선택하여 과거 랭킹을 조회할 수 있습니다.</p>
+
+        <Nav variant="tabs" className="mb-3">
+          <Nav.Item>
+            <Nav.Link as={NavLink} to={`/contests/${year}/${dateParam || ''}`} end>소설 랭킹</Nav.Link>
+          </Nav.Item>
+          <Nav.Item>
+            <Nav.Link as={NavLink} to={`/contests/${year}/tags/rankings/${dateParam || ''}`} end>태그 랭킹</Nav.Link>
+          </Nav.Item>
+        </Nav>
         
         <Row className="mb-2 align-items-center justify-content-between">
           <Col xs="auto">
@@ -326,7 +317,6 @@ const TagRankingsPage = () => {
         {!loading && !error && (
           tags.length > 0 ? (
             <div className="d-flex flex-column" style={{ flex: '1 1 auto', minHeight: 0 }}>
-              {/* Mobile Card View */}
               <div className="d-md-none">
                 {mobileViewMode === 'card' && (
                   <div className="p-1">
@@ -336,7 +326,7 @@ const TagRankingsPage = () => {
                           <div className="d-flex justify-content-between align-items-center">
                             <div className="flex-grow-1 me-2">
                               <div className="d-flex align-items-baseline gap-2">
-                            <span className="fw-bold text-primary text-nowrap" style={{ fontSize: '1rem' }}>{tag.Rank}위</span>
+                                <span className="fw-bold text-primary text-nowrap" style={{ fontSize: '1rem' }}>{tag.Rank}위</span>
                                 <h5 className="mb-0 h6 text-dark">{tag.tag}</h5>
                               </div>
                             </div>
@@ -356,19 +346,13 @@ const TagRankingsPage = () => {
                 )}
               </div>
 
-              {/* Table and Map Container (Visible on PC and Mobile-Table-Mode) */}
               <div className={`${mobileViewMode === 'table' ? 'd-block' : 'd-none d-md-block'} ${isMobile ? 'd-flex flex-column flex-grow-1' : ''}`} style={isMobile ? { minHeight: 0 } : {}}>
-                {/* Table */}
                 <div className="custom-table-wrapper mb-2" style={{ position: 'relative', backgroundColor: 'white', maxHeight: isMobile ? undefined : '500px', flex: isMobile ? '1 1 auto' : undefined, minHeight: isMobile ? 0 : undefined, overflowY: 'auto', opacity: isPending ? 0.7 : 1 }}>
-                  {isPending && (
-                    <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 10 }}>
-                      <Spinner animation="border" />
-                    </div>
-                  )}
+                  {isPending && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 10 }}><Spinner animation="border" /></div>}
                   <Table responsive="md" hover className="custom-table">
                     <thead style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: 'white' }}>
                       <tr>
-                        <th style={{ fontSize: '0.85rem', width: '100px' }}><div className="d-flex align-items-center justify-content-start gap-1"><span>순위</span></div></th>
+                        <th style={{ fontSize: '0.85rem', width: '100px' }}><span>순위</span></th>
                         <th style={{ fontSize: '0.85rem' }}>태그</th>
                         <OverlayTrigger placement="top" overlay={<BootstrapTooltip>'전체 순위 - 순위 + 1'로 계산하여, 모든 순위에 동등한 가중치를 부여하는 방식입니다.</BootstrapTooltip>}><th onClick={() => requestSort('score_linear')} className="cursor-pointer sortable-header" style={{ fontSize: '0.85rem', width: '160px' }}><div className="d-flex align-items-center justify-content-start gap-1"><span>선형 점수</span>{getSortIndicator('score_linear')}</div></th></OverlayTrigger>
                         <OverlayTrigger placement="top" overlay={<BootstrapTooltip>'선형 점수 / 등장 횟수'로 계산하여, 평균적인 값을 보여주는 방식입니다。</BootstrapTooltip>}><th onClick={() => requestSort('avg_linear')} className="cursor-pointer sortable-header" style={{ fontSize: '0.85rem', width: '160px' }}><div className="d-flex align-items-center justify-content-start gap-1"><span>평균 선형 점수</span>{getSortIndicator('avg_linear')}</div></th></OverlayTrigger>
@@ -380,49 +364,31 @@ const TagRankingsPage = () => {
                       </tr>
                     </thead>
                     <tbody onMouseLeave={handleTableMouseLeave}>
-                      {processedTags.length > 0 ? (
-                        processedTags.map((tag: Tag) => (
-                            <tr key={tag.tag} data-tag={tag.tag} onMouseEnter={handleMouseEnter} style={{ cursor: 'pointer' }}>
-                              <td style={{ fontSize: '0.9rem' }}>{tag.Rank}</td>
-                              <td className="fw-bold" style={{ fontSize: '0.9rem' }}>{tag.tag}</td>
-                              <td style={{ fontSize: '0.9rem' }}>{tag.score_linear.toFixed(2)}</td>
-                              <td style={{ fontSize: '0.9rem' }}>{tag.avg_linear.toFixed(2)}</td>
-                              <td style={{ fontSize: '0.9rem' }}>{tag.score_inverse.toFixed(2)}</td>
-                              <td style={{ fontSize: '0.9rem' }}>{tag.avg_inverse.toFixed(2)}</td>
-                              <td style={{ fontSize: '0.9rem' }}>{tag.score_log.toFixed(2)}</td>
-                              <td style={{ fontSize: '0.9rem' }}>{tag.avg_log.toFixed(2)}</td>
-                              <td style={{ fontSize: '0.9rem' }}>{tag.count}</td>
-                            </tr>
-                          ))
-                      ) : (
-                        <tr><td colSpan={9} className="text-center py-4">검색 결과가 없습니다.</td></tr>
-                      )}
+                      {processedTags.map((tag: Tag) => (
+                          <tr key={tag.tag} data-tag={tag.tag} onMouseEnter={handleMouseEnter} style={{ cursor: 'pointer' }}>
+                            <td style={{ fontSize: '0.9rem' }}>{tag.Rank}</td>
+                            <td className="fw-bold" style={{ fontSize: '0.9rem' }}>{tag.tag}</td>
+                            <td style={{ fontSize: '0.9rem' }}>{tag.score_linear.toFixed(2)}</td>
+                            <td style={{ fontSize: '0.9rem' }}>{tag.avg_linear.toFixed(2)}</td>
+                            <td style={{ fontSize: '0.9rem' }}>{tag.score_inverse.toFixed(2)}</td>
+                            <td style={{ fontSize: '0.9rem' }}>{tag.avg_inverse.toFixed(2)}</td>
+                            <td style={{ fontSize: '0.9rem' }}>{tag.score_log.toFixed(2)}</td>
+                            <td style={{ fontSize: '0.9rem' }}>{tag.avg_log.toFixed(2)}</td>
+                            <td style={{ fontSize: '0.9rem' }}>{tag.count}</td>
+                          </tr>
+                        ))}
                     </tbody>
                   </Table>
                 </div>
 
-                {/* Map */}
                 <div style={{ flexShrink: 0 }}> <Card>
                   <Card.Header>
                     <Row className="align-items-center g-2">
-                      <Col>
-                        <h5 className={`mb-0 ${isMobile ? 'h6' : ''}`}>태그 포지셔닝 맵</h5>
-                      </Col>
-                      {!isMobile && (
-                        <Col xs="auto">
-                          <span className="text-muted" style={{ fontSize: '0.875rem' }}>*선형 점수 기준</span>
-                        </Col>
-                      )}
+                      <Col><h5 className={`mb-0 ${isMobile ? 'h6' : ''}`}>태그 포지셔닝 맵</h5></Col>
+                      {!isMobile && <Col xs="auto"><span className="text-muted" style={{ fontSize: '0.875rem' }}>*선형 점수 기준</span></Col>}
                       <Col xs="auto">
                         <ButtonGroup size="sm">
-                          {topNOptions.map((option: number) => (
-                            <Button 
-                              key={option} 
-                              variant={topN === option ? 'primary' : 'outline-secondary'} 
-                              onClick={() => setTopN(option)}
-                              style={{ fontSize: isMobile ? '0.75rem' : undefined, padding: isMobile ? '0.2rem 0.4rem' : undefined }}
-                            >{`Top ${option}`}</Button>
-                          ))}
+                          {topNOptions.map(option => (<Button key={option} variant={topN === option ? 'primary' : 'outline-secondary'} onClick={() => setTopN(option)} style={{ fontSize: isMobile ? '0.75rem' : undefined, padding: isMobile ? '0.2rem 0.4rem' : undefined }}>{`Top ${option}`}</Button>))}
                         </ButtonGroup>
                       </Col>
                     </Row>
@@ -431,23 +397,8 @@ const TagRankingsPage = () => {
                     <ResponsiveContainer width="100%" height={isMobile ? 180 : 400}>
                         <ScatterChart margin={isMobile ? { top: 10, right: 10, bottom: -10, left: -20 } : { top: 20, right: 20, bottom: 20, left: 0 }}>
                             <CartesianGrid />
-                            <XAxis 
-                              type="number" 
-                              dataKey="count" 
-                              name="등장 횟수" 
-                              unit="회" 
-                              domain={xDomain} 
-                              allowDecimals={false} 
-                              tick={{ fontSize: isMobile ? 10 : undefined }} 
-                            />
-                            <YAxis 
-                              type="number" 
-                              dataKey="avg_linear" 
-                              name="평균 선형 점수" 
-                              domain={yDomain} 
-                              allowDecimals={false} 
-                              tick={{ fontSize: isMobile ? 10 : undefined }} 
-                            />
+                            <XAxis type="number" dataKey="count" name="등장 횟수" unit="회" domain={xDomain} allowDecimals={false} tick={{ fontSize: isMobile ? 10 : undefined }} />
+                            <YAxis type="number" dataKey="avg_linear" name="평균 선형 점수" domain={yDomain} allowDecimals={false} tick={{ fontSize: isMobile ? 10 : undefined }} />
                             <RechartsTooltip cursor={{ strokeDasharray: '3 3' }} content={<CustomTooltip yAxisKey="avg_linear" yAxisName="평균 선형 점수" />} />
                             <Scatter name="Tags" data={chartData} shape={<CustomScatterShape />} isAnimationActive={false}>
                                 {chartData.map((entry) => <Cell key={`cell-${entry.tag}`} fill={getColorByRank(entry.Rank)} />)}
@@ -468,4 +419,4 @@ const TagRankingsPage = () => {
   );
 };
 
-export default TagRankingsPage;
+export default ContestTagRankingsPage;
